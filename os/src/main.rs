@@ -21,6 +21,7 @@ mod console;
 mod lang_items;
 mod logging;
 mod sbi;
+mod user_hello;
 
 #[path = "boards/qemu.rs"]
 mod board;
@@ -72,6 +73,8 @@ pub fn rust_main() -> ! {
         boot_stack_top as usize, boot_stack_lower_bound as usize
     );
     error!("[kernel] .bss [{:#x}, {:#x})", sbss as usize, ebss as usize);
+
+    user_hello::user_main();
 
     use crate::board::QEMUExit;
     crate::board::QEMU_EXIT_HANDLE.exit_success(); // CI autotest success
