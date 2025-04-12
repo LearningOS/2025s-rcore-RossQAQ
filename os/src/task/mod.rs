@@ -17,6 +17,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use alloc::collections::btree_map::BTreeMap;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -45,6 +46,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// task system call list
+    syscall_counter: BTreeMap<usize, BTreeMap<usize, usize>>,
 }
 
 lazy_static! {
@@ -65,6 +68,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_counter: BTreeMap::new(),
                 })
             },
         }
@@ -135,6 +139,38 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn read_from_current_unchecked(&self, addr: *const u8) -> u8 {
+        unsafe { core::ptr::read_volatile(addr as *const u8) }
+    }
+
+    fn write_into_current_unchecked(&self, addr: *const u8, data: u8) {
+        unsafe {
+            (addr as *mut u8).write_volatile(data);
+        }
+    }
+
+    fn get_syscall_count(&self, syscall: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner
+            .syscall_counter
+            .get(&current)
+            .and_then(|counter| counter.get(&syscall).cloned())
+            .unwrap_or_default()
+    }
+
+    fn syscall_count(&self, syscall: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner
+            .syscall_counter
+            .entry(current)
+            .or_insert_with(BTreeMap::new)
+            .entry(syscall)
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +204,25 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Read byte from current task addr
+pub unsafe fn read_from_current_task_unchecked(addr: *const u8) -> u8 {
+    TASK_MANAGER.read_from_current_unchecked(addr)
+}
+
+/// Write byte from current task addr
+pub unsafe fn write_into_current_task_unchecked(data: u8, addr: *const u8) -> isize {
+    TASK_MANAGER.write_into_current_unchecked(addr, data);
+    0
+}
+
+/// Add a syscall invoke time on current task
+pub fn count_syscall(syscall: usize) {
+    TASK_MANAGER.syscall_count(syscall);
+}
+
+/// Get syscall invoke time on current task
+pub fn get_syscall_count(syscall: usize) -> usize {
+    TASK_MANAGER.get_syscall_count(syscall)
 }
